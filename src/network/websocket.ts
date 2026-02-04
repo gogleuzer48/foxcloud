@@ -77,7 +77,27 @@ function getHeader(
  */
 export function processWebSocket(request: Request, env: Env): Response {
   const uuids = env.UUID.split(',').filter((v) => v !== '')
-  const proxyIPs = env.PROXY_IP.split(',').filter((v) => v !== '')
+  // Normalize PROXY_IP entries: trim, default missing ports to :443, and validate
+  const proxyIPs = (env.PROXY_IP || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((v) => v !== '')
+    .map((v) => {
+      if (!v.includes(':')) {
+        console.warn(`PROXY_IP "${v}" missing port; defaulting to :443`)
+        return `${v}:443`
+      }
+      return v
+    })
+    .filter((v) => {
+      const parts = v.split(':')
+      const port = Number(parts[parts.length - 1])
+      if (!parts[0] || !Number.isFinite(port) || port <= 0) {
+        console.error(`Invalid PROXY_IP entry ignored: "${v}"`)
+        return false
+      }
+      return true
+    })
 
   const [client, server] = Object.values(new WebSocketPair())
   if (server === undefined) {

@@ -8,7 +8,8 @@ command = "npm run build"
 # Development configuration
 [vars]
 UUID = "08dad8a6-8a6c-4424-9d63-62f3a9bf7f4f,49d598ee-4dfc-4001-95ca-99a5b6002e3c"
-PROXY_IP = "104.28.161.28"
+# For development, explicitly include a port (default :443 for TLS)
+PROXY_IP = "v2server.koyeb.app/vless:443"
 
 
 [observability]
