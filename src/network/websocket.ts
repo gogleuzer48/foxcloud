@@ -77,27 +77,51 @@ function getHeader(
  */
 export function processWebSocket(request: Request, env: Env): Response {
   const uuids = env.UUID.split(',').filter((v) => v !== '')
-  // Normalize PROXY_IP entries: trim, default missing ports to :443, and validate
-  const proxyIPs = (env.PROXY_IP || '')
+  // Parse PROXY_IP entries into structured objects supporting optional servername (format: host:port or host:port@servername)
+  type ProxyEntry = { host: string; port: number; servername?: string }
+  const proxyEntries: ProxyEntry[] = (env.PROXY_IP || '')
     .split(',')
     .map((s) => s.trim())
     .filter((v) => v !== '')
     .map((v) => {
-      if (!v.includes(':')) {
-        console.warn(`PROXY_IP "${v}" missing port; defaulting to :443`)
-        return `${v}:443`
+      // support optional servername after @
+      let servername: string | undefined
+      const atIndex = v.indexOf('@')
+      if (atIndex !== -1) {
+        servername = v.slice(atIndex + 1)
+        v = v.slice(0, atIndex)
       }
-      return v
+
+      // handle IPv6: [addr]:port
+      let host = ''
+      let portStr = ''
+      if (v.startsWith('[')) {
+        const closeIdx = v.indexOf(']')
+        host = v.slice(1, closeIdx)
+        portStr = v.slice(closeIdx + 2)
+      } else {
+        const lastColon = v.lastIndexOf(':')
+        host = v.slice(0, lastColon)
+        portStr = v.slice(lastColon + 1)
+      }
+
+      const port = Number(portStr) || 443
+      return { host, port, servername }
     })
-    .filter((v) => {
-      const parts = v.split(':')
-      const port = Number(parts[parts.length - 1])
-      if (!parts[0] || !Number.isFinite(port) || port <= 0) {
-        console.error(`Invalid PROXY_IP entry ignored: "${v}"`)
+    .filter((p) => {
+      if (!p.host || !Number.isFinite(p.port) || p.port <= 0) {
+        console.error(`Invalid PROXY_IP entry ignored: "${JSON.stringify(p)}"`)
         return false
       }
       return true
     })
+
+  // Log parsed proxy entries for debugging
+  if (proxyEntries.length === 0) {
+    console.warn('No valid PROXY_IP entries found; direct connections only')
+  } else {
+    console.info(`PROXY_IP parsed: ${JSON.stringify(proxyEntries)}`)
+  }
 
   const [client, server] = Object.values(new WebSocketPair())
   if (server === undefined) {
@@ -120,7 +144,7 @@ export function processWebSocket(request: Request, env: Env): Response {
         }
       }
 
-      await processTCP(server, header, proxyIPs)
+      await processTCP(server, header, proxyEntries)
     })
     .catch((err) => {
       console.error(err)

@@ -3,25 +3,31 @@ import { Protocol } from '../constants/protocol'
 import { safeCloseWebSocket } from '../utils/helpers'
 import type { Header } from '../protocols/index'
 
+interface ProxyEntry {
+  host: string
+  port: number
+  servername?: string
+}
+
 async function retry(
   version: number,
   rawData: ArrayBuffer,
   ws: WebSocket,
-  proxyIPs: string[],
+  proxyEntries: ProxyEntry[],
 ): Promise<Socket | undefined> {
-  for (const proxyIP of proxyIPs) {
+  for (const proxy of proxyEntries) {
     try {
-      const socket = await dial(proxyIP, version, rawData, ws)
+      const socket = await dial(proxy, version, rawData, ws)
       return socket
     } catch (err) {
-      console.error(err)
+      console.error(`proxy ${proxy.host}:${proxy.port} failed:`, err)
       continue
     }
   }
 }
 
 async function dial(
-  remote: SocketAddress | string,
+  remote: SocketAddress | string | ProxyEntry,
   version: number,
   rawData: ArrayBuffer,
   ws: WebSocket,
@@ -29,12 +35,14 @@ async function dial(
   let messageFn = null
   let closeFn = null
   let errorFn = null
-  try {
-    const socket = connect(remote)
+
+  // helper to attach handlers and perform initial read/write
+  async function attach(socket: Socket) {
     const writer = socket.writable.getWriter()
     await writer.write(rawData)
     messageFn = async (event: MessageEvent) => {
-      await writer.write(event.data)
+      const data = event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer()
+      await writer.write(data)
     }
     closeFn = async () => {
       await socket.close()
@@ -56,6 +64,30 @@ async function dial(
       await new Blob([Protocol.RESPONSE_DATA(version), value]).arrayBuffer(),
     )
     return socket
+  }
+
+  try {
+    // If this is a ProxyEntry, try servername-based connect first (so SNI is present), then fall back to host
+    if (typeof remote === 'object' && (remote as ProxyEntry).host) {
+      const proxy = remote as ProxyEntry
+      if (proxy.servername) {
+        try {
+          console.info(`attempting connect using servername ${proxy.servername}:${proxy.port}`)
+          const socket = connect({ hostname: proxy.servername, port: proxy.port })
+          return await attach(socket)
+        } catch (err) {
+          console.error(`connect via servername ${proxy.servername} failed:`, err)
+          // continue to try by host
+        }
+      }
+      console.info(`attempting direct connect to proxy host ${proxy.host}:${proxy.port}`)
+      const socket = connect({ hostname: proxy.host, port: proxy.port })
+      return await attach(socket)
+    }
+
+    // Otherwise, behave as before
+    const socket = connect(remote as SocketAddress | string)
+    return await attach(socket)
   } catch (err) {
     if (messageFn) {
       ws.removeEventListener('message', messageFn)
@@ -73,7 +105,7 @@ async function dial(
 export async function processTCP(
   ws: WebSocket,
   header: Header,
-  proxyIPs: string[],
+  proxyEntries: ProxyEntry[],
 ) {
   let socket: Socket | undefined
   try {
@@ -107,7 +139,7 @@ export async function processTCP(
     )
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
   } catch (_) {
-    socket = await retry(header.version, header.rawData, ws, proxyIPs)
+    socket = await retry(header.version, header.rawData, ws, proxyEntries)
   }
   if (socket === undefined) {
     throw Error(

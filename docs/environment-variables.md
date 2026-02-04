@@ -28,14 +28,18 @@ UUID = "08dad8a6-8a6c-4424-9d63-62f3a9bf7f4f,49d598ee-4dfc-4001-95ca-99a5b6002e3
 
 The PROXY_IP variable contains one or more proxy server addresses.
 
-**Format**: Single IP:port or comma-separated list of IP:port combinations
-**Example**:
+**Format**: Single host:port or ip:port, or comma-separated list of them. You may optionally include a servername (SNI) using the `@` suffix: `ip:port@servername`.
+**Examples**:
 ```
 PROXY_IP = "172.66.45.9:443"
 ```
 or
 ```
 PROXY_IP = "172.66.45.9:443,104.18.128.25:443,162.159.136.94:443"
+```
+With explicit SNI (useful when connecting to an IP that requires a servername):
+```
+PROXY_IP = "1.2.3.4:443@proxy.example.com"
 ```
 
 ## Setting Environment Variables
