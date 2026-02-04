@@ -77,21 +77,30 @@ export async function processTCP(
 ) {
   let socket: Socket | undefined
   try {
-    // For domain addresses, we need to resolve them first
-    let address = header.address
+    // Preserve the original hostname (domain) for TLS SNI.
+    // Let the socket implementation perform DNS lookups so SNI and TLS handshakes use the correct server name.
+    const originalAddress = header.address
+    let address = originalAddress
     if (isNaN(Number(address.split('.')[0]))) {
-      // This looks like a domain name, try to resolve it
+      // This looks like a domain name; attempt to resolve for logging/metrics
       try {
         const resolved = await resolveDomain(address)
-        address = resolved
+        // If resolution succeeded, keep the resolved IP available but continue to use the original hostname for connect
+        if (resolved && resolved !== address) {
+          address = resolved
+        }
       } catch (resolveErr) {
         console.error(`Failed to resolve domain ${address}:`, resolveErr)
         // Fall back to original address
       }
     }
-    
+
+    // Log which hostname/IP we will attempt to connect to and which hostname we'll use for SNI
+    console.info(`connecting to host: ${address} (SNI: ${originalAddress})`)
+
+    // Use the original hostname for the connect call so the TLS SNI is preserved.
     socket = await dial(
-      { hostname: address, port: header.port },
+      { hostname: originalAddress, port: header.port },
       header.version,
       header.rawData,
       ws,
@@ -122,28 +131,34 @@ export async function processTCP(
 
 // Add domain resolution function
 async function resolveDomain(domain: string): Promise<string> {
-  // Try to resolve the domain using DNS over HTTPS
+  // Try to resolve the domain using DNS over HTTPS (prefer A, then AAAA)
   try {
-    const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${domain}&type=A`, {
-      headers: {
-        'Accept': 'application/dns-json'
-      }
-    })
-    
-    if (response.ok) {
+    async function doh(type: 'A' | 'AAAA'): Promise<string | null> {
+      const response = await fetch(
+        `https://cloudflare-dns.com/dns-query?name=${domain}&type=${type}`,
+        { headers: { 'Accept': 'application/dns-json' } },
+      )
+      if (!response.ok) return null
       const data: any = await response.json()
       if (data.Answer && data.Answer.length > 0) {
-        // Return the first A record
-        const aRecord = data.Answer.find((record: any) => record.type === 1)
-        if (aRecord) {
-          return aRecord.data
-        }
+        // Prefer the matching record type
+        const wantedType = type === 'A' ? 1 : 28
+        const rec = data.Answer.find((record: any) => record.type === wantedType)
+        if (rec) return rec.data
+        // Otherwise return the first answer available
+        return data.Answer[0].data
       }
+      return null
     }
+
+    const a = await doh('A')
+    if (a) return a
+    const aaaa = await doh('AAAA')
+    if (aaaa) return aaaa
   } catch (err) {
     console.error('DNS resolution error:', err)
   }
-  
+
   // Fallback to the original domain if resolution fails
   return domain
 }
