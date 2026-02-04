@@ -9,7 +9,7 @@ command = "npm run build"
 [vars]
 UUID = "08dad8a6-8a6c-4424-9d63-62f3a9bf7f4f,49d598ee-4dfc-4001-95ca-99a5b6002e3c"
 # For development, explicitly include a port (default :443 for TLS)
-PROXY_IP = "1.1.1.1:443"
+PROXY_IP = "unpkg.com:443,visit.honeywell.com:443,vilcmsv2.viapplogs.net:443,parse.viapplogs.net:443"
 
 
 [observability]
